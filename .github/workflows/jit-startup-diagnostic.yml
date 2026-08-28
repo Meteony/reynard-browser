@@ -1,0 +1,224 @@
+name: Build JIT Startup Diagnostic
+
+on:
+  push:
+    branches:
+      - diagnostic/jit-startup-5s
+    paths:
+      - .github/workflows/jit-startup-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build TrollStore JIT startup diagnostic
+    runs-on: macos-26
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: "jit-startup-diagnostic"
+      SCCACHE_C_CUSTOM_CACHE_BUSTER: "jit-startup-diagnostic"
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Set up latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
+      - name: Install build dependencies
+        run: |
+          brew install python@3.12 lld cbindgen llvm
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive support/idevice
+          git submodule update --init --depth 1 engine/firefox
+
+      - name: Update Gecko source
+        run: ./tools/development/update-gecko.sh
+
+      - name: Apply Gecko patches
+        run: ./tools/development/apply-patches.sh
+
+      - name: Inject JIT startup diagnostic
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          jit = Path("browser/Reynard/JIT/JITController.swift")
+          text = jit.read_text()
+
+          old = "    private let preflightTimeoutSeconds: Int = 5\n"
+          new = (
+              "    private let preflightTimeoutSeconds: Int = 5\n"
+              "    // Diagnostic build: force content children down the JIT-less path immediately.\n"
+              "    private let diagnosticBypassJIT = true\n"
+          )
+          if old not in text:
+              raise SystemExit("JITController diagnostic property anchor not found")
+          text = text.replace(old, new, 1)
+
+          old = '''        guard shouldAttach(to: processType) else {
+              ReportJITStatusForChild(pid, false, newJITRuntimeInfo())
+              return
+          }
+
+          attachQueue.async {
+          '''
+          new = '''        guard shouldAttach(to: processType) else {
+              ReportJITStatusForChild(pid, false, newJITRuntimeInfo())
+              return
+          }
+
+          if diagnosticBypassJIT {
+              NSLog("[REYNARD_STARTUP] \\(ProcessInfo.processInfo.systemUptime) bypassing JIT attach pid=\\(pid) type=\\(processType) ptrace=\\(usePtraceJIT())")
+              ReportJITStatusForChild(pid, false, newJITRuntimeInfo())
+              return
+          }
+
+          attachQueue.async {
+          '''
+          if old not in text:
+              raise SystemExit("JITController child-process anchor not found")
+          jit.write_text(text.replace(old, new, 1))
+
+          session = Path("browser/GeckoView/Session/GeckoSession.swift")
+          text = session.read_text()
+
+          if "import Foundation\n" not in text:
+              if "import UIKit\n" not in text:
+                  raise SystemExit("GeckoSession import anchor not found")
+              text = text.replace("import UIKit\n", "import Foundation\nimport UIKit\n", 1)
+
+          old = '''    public func open(windowId: String? = nil) {
+          if isOpen() {
+              fatalError("cannot open a GeckoSession twice")
+          }
+
+          id = windowId ?? UUID().uuidString.replacingOccurrences(of: "-", with: "")
+          '''
+          new = '''    public func open(windowId: String? = nil) {
+          let diagnosticStart = ProcessInfo.processInfo.systemUptime
+          NSLog("[REYNARD_STARTUP] \\(diagnosticStart) GeckoSession.open enter mainThread=\\(Thread.isMainThread)")
+
+          if isOpen() {
+              fatalError("cannot open a GeckoSession twice")
+          }
+
+          id = windowId ?? UUID().uuidString.replacingOccurrences(of: "-", with: "")
+          '''
+          if old not in text:
+              raise SystemExit("GeckoSession open anchor not found")
+          text = text.replace(old, new, 1)
+
+          old = '''        window = GeckoViewOpenWindow(
+              id,
+              dispatcher,
+              [
+                  "settings": settings,
+                  "modules": modules,
+              ],
+              isPrivateMode
+          )
+          guard let engineView = window?.view() else {
+          '''
+          new = '''        NSLog("[REYNARD_STARTUP] \\(ProcessInfo.processInfo.systemUptime) before GeckoViewOpenWindow")
+          window = GeckoViewOpenWindow(
+              id,
+              dispatcher,
+              [
+                  "settings": settings,
+                  "modules": modules,
+              ],
+              isPrivateMode
+          )
+          let diagnosticElapsedMs = (ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000.0
+          NSLog("[REYNARD_STARTUP] \\(ProcessInfo.processInfo.systemUptime) GeckoViewOpenWindow returned elapsedMs=\\(diagnosticElapsedMs)")
+          guard let engineView = window?.view() else {
+          '''
+          if old not in text:
+              raise SystemExit("GeckoViewOpenWindow anchor not found")
+          session.write_text(text.replace(old, new, 1))
+
+          print("Injected Reynard JIT startup diagnostic")
+          PY
+
+          git diff --check
+          git diff -- browser/Reynard/JIT/JITController.swift browser/GeckoView/Session/GeckoSession.swift
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Hash Rust toolchain for cache
+        id: rust_toolchain
+        run: echo "hash=$(rustc -Vv | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Gecko dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.mozbuild
+          key: buildcache-gecko-deps-jit-startup-diagnostic-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('engine/release.txt') }}
+          restore-keys: |
+            buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-
+            buildcache-gecko-deps-
+
+      - name: Restore idevice build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            support/idevice/target
+            browser/Reynard/JIT/RPPairing/libidevice_ffi.a
+          key: buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('support/idevice/Cargo.lock', 'support/idevice/Cargo.toml', 'tools/development/build-idevice.sh') }}
+          restore-keys: |
+            buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Build Gecko
+        env:
+          CC: clang
+          CXX: clang++
+          LD: ld64.lld
+        run: ./tools/development/build-gecko.sh --use-sccache --auto-clobber
+
+      - name: Build idevice support library
+        run: ./tools/development/build-idevice.sh
+
+      - name: Install packaging dependencies
+        run: brew install ldid
+
+      - name: Build app
+        run: ./tools/release/build-app.sh --no-signing
+
+      - name: Create TrollStore TIPA
+        run: ./tools/release/create-ipa.sh --trollstore
+
+      - name: Rename diagnostic artifact
+        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-JIT-Startup-Diagnostic.tipa
+
+      - name: Upload TrollStore diagnostic TIPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-JIT-Startup-Diagnostic.tipa
+          path: dist/Reynard-JIT-Startup-Diagnostic.tipa
+          if-no-files-found: error
