@@ -20,6 +20,8 @@ final class JITController {
     private(set) var isJITLessModeActive = false
     private var pendingFailureAction: (() -> Void)?
     private let preflightTimeoutSeconds: Int = 5
+    // Diagnostic build: force tab content children down the established JIT-less path immediately.
+    private let diagnosticBypassJIT = true
     private let failurePresentationRetryLimit = 12
     
     private init() {}
@@ -156,6 +158,12 @@ final class JITController {
         }
         
         guard shouldAttach(to: processType) else {
+            ReportJITStatusForChild(pid, false, newJITRuntimeInfo())
+            return
+        }
+
+        if diagnosticBypassJIT {
+            NSLog("[REYNARD_STARTUP] bypassing JIT attach pid=\(pid) type=\(processType) uptime=\(ProcessInfo.processInfo.systemUptime)")
             ReportJITStatusForChild(pid, false, newJITRuntimeInfo())
             return
         }
