@@ -7,7 +7,10 @@ on:
     paths:
       - .github/workflows/jit-startup-diagnostic.yml
       - browser/Reynard/JIT/JITController.swift
+      - browser/Reynard/main.swift
+      - browser/GeckoView/Runtime/GeckoRuntime.swift
       - browser/GeckoView/Session/GeckoSession.swift
+      - patches/zz-startup-file-diagnostic.patch
   workflow_dispatch:
 
 permissions:
@@ -58,7 +61,11 @@ jobs:
       - name: Verify committed diagnostic
         run: |
           grep -n "diagnosticBypassJIT = true" browser/Reynard/JIT/JITController.swift
-          grep -n "bypassing JIT attach" browser/Reynard/JIT/JITController.swift
+          grep -n "/var/mobile/Documents/ReynardDiagnostics/startup.log" browser/GeckoView/Runtime/GeckoRuntime.swift
+          grep -n "before beginExtensionRequestWithInputItems" engine/firefox/ipc/glue/NSExtensionUtils.mm
+          grep -n "before xpc bootstrap send" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
+          grep -n "GeckoViewOpenWindow before nsIWindowWatcher::OpenWindow" engine/firefox/widget/uikit/nsWindow.mm
+          grep -n "GetCompositorWidgetInitData before monitor wait" engine/firefox/widget/uikit/nsWindow.mm
           git diff --check
 
       - name: Install Rust toolchain
@@ -115,11 +122,11 @@ jobs:
         run: ./tools/release/create-ipa.sh --trollstore
 
       - name: Rename diagnostic artifact
-        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-JIT-Startup-Diagnostic.tipa
+        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Startup-Trace-Diagnostic.tipa
 
       - name: Upload TrollStore diagnostic TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: Reynard-JIT-Startup-Diagnostic.tipa
-          path: dist/Reynard-JIT-Startup-Diagnostic.tipa
+          name: Reynard-Startup-Trace-Diagnostic.tipa
+          path: dist/Reynard-Startup-Trace-Diagnostic.tipa
           if-no-files-found: error
