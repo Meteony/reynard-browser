@@ -11,6 +11,7 @@ on:
       - browser/GeckoView/Runtime/GeckoRuntime.swift
       - browser/GeckoView/Session/GeckoSession.swift
       - tools/development/inject-startup-trace.py
+      - tools/development/inject-lazy-restore-diagnostic.py
   workflow_dispatch:
 
 permissions:
@@ -61,7 +62,10 @@ jobs:
       - name: Inject startup trace
         run: python tools/development/inject-startup-trace.py
 
-      - name: Verify committed diagnostic
+      - name: Inject lazy restored-session diagnostic
+        run: python tools/development/inject-lazy-restore-diagnostic.py
+
+      - name: Verify diagnostic injection
         run: |
           grep -n "diagnosticBypassJIT = false" browser/Reynard/JIT/JITController.swift
           grep -n 'directoryPath = "/var/mobile/Documents/ReynardDiagnostics"' browser/GeckoView/Runtime/GeckoRuntime.swift
@@ -71,6 +75,8 @@ jobs:
           grep -n "before xpc bootstrap send" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
           grep -n "GeckoViewOpenWindow before nsIWindowWatcher::OpenWindow" engine/firefox/widget/uikit/nsWindow.mm
           grep -n "GetCompositorWidgetInitData before monitor wait" engine/firefox/widget/uikit/nsWindow.mm
+          test "$(grep -c 'opening: .manual' browser/Reynard/Client/TabManagement/TabManagerImpl.swift)" -eq 2
+          grep -n 'opening: opening ?? .immediate(windowID: windowId)' browser/Reynard/Client/TabManagement/TabManagerImpl.swift
           git diff --check
 
       - name: Install Rust toolchain
@@ -127,11 +133,11 @@ jobs:
         run: ./tools/release/create-ipa.sh --trollstore
 
       - name: Rename diagnostic artifact
-        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Startup-Trace-Diagnostic.tipa
+        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Lazy-Restore-Startup-Diagnostic.tipa
 
       - name: Upload TrollStore diagnostic TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: Reynard-Startup-Trace-Diagnostic.tipa
-          path: dist/Reynard-Startup-Trace-Diagnostic.tipa
+          name: Reynard-Lazy-Restore-Startup-Diagnostic.tipa
+          path: dist/Reynard-Lazy-Restore-Startup-Diagnostic.tipa
           if-no-files-found: error
