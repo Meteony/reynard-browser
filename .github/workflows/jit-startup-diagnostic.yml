@@ -12,7 +12,8 @@ on:
       - browser/GeckoView/Session/GeckoSession.swift
       - tools/development/inject-startup-trace.py
       - tools/development/inject-lazy-restore-diagnostic.py
-      - tools/development/inject-disable-prelaunch-diagnostic.py
+      - tools/development/inject-startup-critical-path-diagnostic.py
+      - tools/development/inject-concurrent-extension-launch-diagnostic.py
   workflow_dispatch:
 
 permissions:
@@ -66,8 +67,11 @@ jobs:
       - name: Inject lazy restored-session diagnostic
         run: python tools/development/inject-lazy-restore-diagnostic.py
 
-      - name: Disable content-process prelaunch
-        run: python tools/development/inject-disable-prelaunch-diagnostic.py
+      - name: Inject startup critical-path diagnostic
+        run: python tools/development/inject-startup-critical-path-diagnostic.py
+
+      - name: Relax NSExtension launch queue
+        run: python tools/development/inject-concurrent-extension-launch-diagnostic.py
 
       - name: Verify diagnostic injection
         run: |
@@ -76,12 +80,19 @@ jobs:
           grep -n 'logPath = directoryPath + "/startup.log"' browser/GeckoView/Runtime/GeckoRuntime.swift
           grep -n "GeckoSession.open before GeckoViewOpenWindow" browser/GeckoView/Session/GeckoSession.swift
           grep -n "before beginExtensionRequestWithInputItems" engine/firefox/ipc/glue/NSExtensionUtils.mm
+          grep -n "dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0)" engine/firefox/ipc/glue/NSExtensionUtils.mm
           grep -n "before xpc bootstrap send" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
+          grep -n "childID=%d" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
           grep -n "GeckoViewOpenWindow before nsIWindowWatcher::OpenWindow" engine/firefox/widget/uikit/nsWindow.mm
           grep -n "GetCompositorWidgetInitData before monitor wait" engine/firefox/widget/uikit/nsWindow.mm
           test "$(grep -c 'opening: .manual' browser/Reynard/Client/TabManagement/TabManagerImpl.swift)" -eq 2
           grep -n 'opening: opening ?? .immediate(windowID: windowId)' browser/Reynard/Client/TabManagement/TabManagerImpl.swift
-          grep -n 'pref("dom.ipc.processPrelaunch.enabled", false);' engine/firefox/mobile/ios/app/mobile.js
+          grep -n "critical first-contentful-paint" browser/Reynard/Client/TabManagement/TabManagerImpl.swift
+          grep -n "critical first-composite" browser/Reynard/Client/TabManagement/TabManagerImpl.swift
+          grep -n "critical restored-load-request" browser/Reynard/Client/TabManagement/TabManagerImpl.swift
+          grep -n "launch childID=%d remoteType=%s" engine/firefox/dom/ipc/ContentParent.cpp
+          grep -n "launch-reason prealloc-request" engine/firefox/dom/ipc/ContentParent.cpp
+          grep -n 'pref("dom.ipc.processPrelaunch.enabled", true);' engine/firefox/mobile/ios/app/mobile.js
           git diff --check
 
       - name: Install Rust toolchain
@@ -138,11 +149,11 @@ jobs:
         run: ./tools/release/create-ipa.sh --trollstore
 
       - name: Rename diagnostic artifact
-        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Lazy-Restore-No-Prelaunch-Diagnostic.tipa
+        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Lazy-Restore-Concurrent-Launch-Diagnostic.tipa
 
       - name: Upload TrollStore diagnostic TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: Reynard-Lazy-Restore-No-Prelaunch-Diagnostic.tipa
-          path: dist/Reynard-Lazy-Restore-No-Prelaunch-Diagnostic.tipa
+          name: Reynard-Lazy-Restore-Concurrent-Launch-Diagnostic.tipa
+          path: dist/Reynard-Lazy-Restore-Concurrent-Launch-Diagnostic.tipa
           if-no-files-found: error
