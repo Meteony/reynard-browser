@@ -368,7 +368,8 @@ final class TabManagerImplementation: NSObject, TabManager {
                     tabID: snapshot.id,
                     url: snapshot.url,
                     windowId: nil,
-                    isPrivate: false
+                    isPrivate: false,
+                    opening: .manual
                 ),
                 title: snapshot.title,
                 url: snapshot.url,
@@ -389,7 +390,8 @@ final class TabManagerImplementation: NSObject, TabManager {
                     tabID: snapshot.id,
                     url: snapshot.url,
                     windowId: nil,
-                    isPrivate: true
+                    isPrivate: true,
+                    opening: .manual
                 ),
                 title: snapshot.title,
                 url: snapshot.url,
@@ -1002,13 +1004,14 @@ final class TabManagerImplementation: NSObject, TabManager {
         tabID: UUID,
         url: String?,
         windowId: String?,
-        isPrivate: Bool
+        isPrivate: Bool,
+        opening: SessionOpening? = nil
     ) -> GeckoSession {
         return sessionManager.createSession(
             url: url,
             tabID: tabID,
             isPrivate: isPrivate,
-            opening: .immediate(windowID: windowId),
+            opening: opening ?? .immediate(windowID: windowId),
             delegates: sessionDelegates
         )
     }
