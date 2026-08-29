@@ -67,6 +67,45 @@ def main() -> None:
     )
 
     replace_once(
+        """        if tabs(for: selectedTabMode).isEmpty {
+            selectedTabMode = regularTabs.isEmpty ? .private : .regular
+        }
+        
+        delegate?.tabManagerDidChangeTabs(self)
+""",
+        """        if tabs(for: selectedTabMode).isEmpty {
+            selectedTabMode = regularTabs.isEmpty ? .private : .regular
+        }
+
+        // Keep the user's saved selection when it is a real web page. For this
+        // diagnostic only, fall back to another restored HTTP(S) tab when the
+        // saved selection is blank so first-paint timing is meaningful.
+        let diagnosticSelectedTabs = tabs(for: selectedTabMode)
+        let diagnosticSelectedIndex = selectedIndex(for: selectedTabMode)
+        let diagnosticSelectionHasRemoteURL =
+            diagnosticSelectedTabs.indices.contains(diagnosticSelectedIndex) &&
+            remoteURL(from: displayedURL(for: diagnosticSelectedTabs[diagnosticSelectedIndex])) != nil
+
+        if !diagnosticSelectionHasRemoteURL {
+            if let index = regularTabs.lastIndex(where: {
+                remoteURL(from: displayedURL(for: $0)) != nil
+            }) {
+                selectedTabMode = .regular
+                selectedRegularTabIndex = index
+            } else if let index = privateTabs.lastIndex(where: {
+                remoteURL(from: displayedURL(for: $0)) != nil
+            }) {
+                selectedTabMode = .private
+                selectedPrivateTabIndex = index
+            }
+        }
+        
+        delegate?.tabManagerDidChangeTabs(self)
+""",
+        "diagnostic restored web-tab fallback",
+    )
+
+    replace_once(
         """    private func createSession(
         tabID: UUID,
         url: String?,
@@ -101,7 +140,7 @@ def main() -> None:
         "session factory",
     )
 
-    print("Lazy restored-session diagnostic injected successfully.")
+    print("Lazy restored-session diagnostic injected with web-tab timing fallback.")
 
 
 if __name__ == "__main__":
