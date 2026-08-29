@@ -152,10 +152,18 @@ namespace layers {
     replace_once(
         '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
     nsTArray<NativeLayerCommand>&& aCommands) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_OK();
+  }
+
   for (auto& command : aCommands) {
 ''',
         '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
     nsTArray<NativeLayerCommand>&& aCommands) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_OK();
+  }
+
 #ifdef XP_IOS
   size_t changedSurfaceCount = 0;
 #endif
