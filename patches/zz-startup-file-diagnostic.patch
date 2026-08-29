@@ -1,0 +1,382 @@
+diff --git a/ipc/glue/NSExtensionUtils.mm b/ipc/glue/NSExtensionUtils.mm
+--- a/ipc/glue/NSExtensionUtils.mm
++++ b/ipc/glue/NSExtensionUtils.mm
+@@ -8,12 +8,50 @@
+ #include "NSExtensionUtils.h"
+ #include "LaunchError.h"
+ 
+ #import <Foundation/Foundation.h>
++#include <fcntl.h>
+ #include <memory>
++#include <stdarg.h>
++#include <stdio.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <unistd.h>
+ 
+ #import "mozilla/widget/GeckoViewSupport.h"
+ 
+ using namespace mozilla::widget;
++
++static void ReynardStartupDiagnosticLog(const char* format, ...) {
++  static const char* kDirectory =
++      "/var/mobile/Documents/ReynardDiagnostics";
++  static const char* kPath =
++      "/var/mobile/Documents/ReynardDiagnostics/startup.log";
++
++  mkdir(kDirectory, 0755);
++  int fd = open(kPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
++  if (fd < 0) {
++    return;
++  }
++
++  char message[1024];
++  va_list args;
++  va_start(args, format);
++  vsnprintf(message, sizeof(message), format, args);
++  va_end(args);
++
++  timeval tv = {};
++  gettimeofday(&tv, nullptr);
++  const double wallTime =
++      static_cast<double>(tv.tv_sec) + static_cast<double>(tv.tv_usec) / 1e6;
++
++  char line[1400];
++  int length = snprintf(line, sizeof(line),
++                        "native wall=%.6f pid=%d NSExtension %s\n", wallTime,
++                        getpid(), message);
++  if (length > 0) {
++    if (length >= static_cast<int>(sizeof(line))) {
++      length = static_cast<int>(sizeof(line)) - 1;
++    }
++    write(fd, line, static_cast<size_t>(length));
++  }
++  close(fd);
++}
+ 
+ NS_ASSUME_NONNULL_BEGIN
+@@ -51,11 +89,14 @@
+ @implementation ExtensionConnectionDelegate
+ 
+ - (BOOL)listener:(NSXPCListener*)listener
+     shouldAcceptNewConnection:(NSXPCConnection*)newConnection {
++  ReynardStartupDiagnosticLog("NSXPC listener shouldAcceptNewConnection ENTER");
+   if (self.connectionHandler) {
+     self.connectionHandler(newConnection);
+   }
+   [newConnection resume];
++  ReynardStartupDiagnosticLog("NSXPC listener shouldAcceptNewConnection EXIT");
+   return YES;
+ }
+ 
+ - (void)ping {
++  ReynardStartupDiagnosticLog("bootstrap ping received");
+   if (self.pingHandler) {
+     self.pingHandler();
+   }
+@@ -107,8 +148,10 @@
+ - (void)startWithCompletion:
+     (void (^_Nonnull)(NSError* _Nullable error))aCompletion {
++  ReynardStartupDiagnosticLog("ExtensionProcess startWithCompletion CALL");
+   void (^completion)(NSError* _Nullable) = [aCompletion copy];
+ 
+   dispatch_async(ExtensionLaunchQueue(), ^{
++    ReynardStartupDiagnosticLog("ExtensionProcess launch queue ENTER");
+     __block bool completed = false;
+     void (^completeOnce)(NSError* _Nullable) = ^(NSError* _Nullable error) {
+       dispatch_async(ExtensionLaunchQueue(), ^{
+@@ -117,6 +160,8 @@
+           return;
+         }
+         completed = true;
++        ReynardStartupDiagnosticLog("ExtensionProcess completeOnce error=%s",
++                                    error ? "yes" : "no");
+         completion(error);
+         [completion release];
+       });
+@@ -134,6 +179,7 @@
+ 
+     __block ExtensionProcess* process = self;
+     [mListenerDelegate setConnectionHandler:^(NSXPCConnection* connection) {
++      ReynardStartupDiagnosticLog("ExtensionProcess connectionHandler ENTER");
+       if (process->mInvalidated || process->mConnection) {
+         [connection invalidate];
+         return;
+@@ -160,6 +206,7 @@
+             @"Failed to get libxpc connection from NSXPCConnection"));
+         return;
+       }
++      ReynardStartupDiagnosticLog("ExtensionProcess connectionHandler EXIT libxpc=ready");
+     }];
+ 
+     [mListener setDelegate:mListenerDelegate];
+@@ -173,8 +220,11 @@
+     }
+ 
+     NSError* extensionError = nil;
++    ReynardStartupDiagnosticLog("before NSExtension extensionWithIdentifier");
+     mExtension = [[NSExtension extensionWithIdentifier:extensionIdentifier
+                                                  error:&extensionError] retain];
++    ReynardStartupDiagnosticLog("after NSExtension extensionWithIdentifier success=%d",
++                                mExtension != nil);
+     if (!mExtension) {
+       completeOnce(ExtensionLaunchError(@"Failed to create NSExtension",
+                                         extensionError));
+@@ -190,10 +240,14 @@
+     [input setUserInfo:@{@"ReynardXPCListenerEndpoint" : [mListener endpoint]}];
+ 
+     NSError* requestError = nil;
++    ReynardStartupDiagnosticLog("before beginExtensionRequestWithInputItems");
+     mRequestIdentifier =
+         [[mExtension beginExtensionRequestWithInputItems:@[ input ]
+                                                    error:&requestError] retain];
++    ReynardStartupDiagnosticLog(
++        "after beginExtensionRequestWithInputItems request=%s",
++        mRequestIdentifier ? "created" : "nil");
+     if (!mRequestIdentifier) {
+       completeOnce(ExtensionLaunchError(@"Failed to start NSExtension request",
+                                         requestError));
+@@ -204,6 +258,7 @@
+         dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC),
+         ExtensionLaunchQueue(), ^{
++          ReynardStartupDiagnosticLog("8s NSExtension connection watchdog fired");
+           completeOnce(ExtensionLaunchError(
+               @"Timed out waiting for child extension NSXPC connection"));
+         });
+@@ -267,12 +322,16 @@
+ void NSExtensionProcess::StartProcess(
+     const std::function<void(Result<NSExtensionProcess, LaunchError>&&)>&
+         aCompletion) {
++  ReynardStartupDiagnosticLog("NSExtensionProcess::StartProcess ENTER");
+   auto ownedCompletion = std::make_shared<
+       std::function<void(Result<NSExtensionProcess, LaunchError>&&)>>(
+       aCompletion);
+ 
+   ExtensionProcess* process = [[ExtensionProcess alloc] init];
+ 
+   [process startWithCompletion:^(NSError* error) {
++    ReynardStartupDiagnosticLog(
++        "NSExtensionProcess::StartProcess completion error=%s",
++        error ? "yes" : "no");
+     if (error) {
+       [process release];
+       (*ownedCompletion)(Err(LaunchError("NSExtensionProcess::StartProcess")));
+diff --git a/ipc/glue/GeckoChildProcessHost.cpp b/ipc/glue/GeckoChildProcessHost.cpp
+--- a/ipc/glue/GeckoChildProcessHost.cpp
++++ b/ipc/glue/GeckoChildProcessHost.cpp
+@@ -32,10 +32,15 @@
+ #ifdef XP_IOS
++#  include <fcntl.h>
++#  include <stdarg.h>
++#  include <sys/stat.h>
++#  include <sys/time.h>
+ #  include <unistd.h>
+ #  include <stdio.h>
+ #  include <unordered_map>
+ #  include "mozilla/widget/GeckoViewRuntimeSupport.h"
+ #endif
+@@ -137,6 +142,43 @@ namespace ipc {
+ #ifdef XP_IOS
+ static StaticMutex sChildJITPipeMutex;
+ static std::unordered_map<int32_t, UniqueFileHandle> sChildJITPipeWriters;
++
++static void ReynardStartupDiagnosticLog(const char* format, ...) {
++  static const char* kDirectory =
++      "/var/mobile/Documents/ReynardDiagnostics";
++  static const char* kPath =
++      "/var/mobile/Documents/ReynardDiagnostics/startup.log";
++  mkdir(kDirectory, 0755);
++  int fd = open(kPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
++  if (fd < 0) {
++    return;
++  }
++
++  char message[1024];
++  va_list args;
++  va_start(args, format);
++  vsnprintf(message, sizeof(message), format, args);
++  va_end(args);
++
++  timeval tv = {};
++  gettimeofday(&tv, nullptr);
++  const double wallTime =
++      static_cast<double>(tv.tv_sec) + static_cast<double>(tv.tv_usec) / 1e6;
++  char line[1400];
++  int length = snprintf(line, sizeof(line),
++                        "native wall=%.6f pid=%d ChildHost %s\n", wallTime,
++                        getpid(), message);
++  if (length > 0) {
++    if (length >= static_cast<int>(sizeof(line))) {
++      length = static_cast<int>(sizeof(line)) - 1;
++    }
++    write(fd, line, static_cast<size_t>(length));
++  }
++  close(fd);
++}
+ 
+ }  // namespace ipc
+@@ -1468,6 +1510,7 @@ Result<Ok, LaunchError> IosProcessLauncher::DoSetup() {
+ }
+ 
+ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
++  ReynardStartupDiagnosticLog("IosProcessLauncher::DoLaunch ENTER type=%d", int(mProcessType));
+   DarwinObjectPtr<xpc_object_t> bootstrapMessage =
+       AdoptDarwinObject(xpc_dictionary_create(nullptr, nullptr, 0));
+@@ -1530,6 +1573,7 @@ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
+ 
+   auto promise = MakeRefPtr<ProcessLaunchPromise::Private>(__func__);
+   auto didSettle = std::make_shared<std::atomic<bool>>(false);
++  ReynardStartupDiagnosticLog("before NSExtensionProcess::StartProcess type=%d", int(mProcessType));
+   NSExtensionProcess::StartProcess([self = RefPtr{this}, promise, didSettle,
+                                     bootstrapMessage =
+                                         std::move(bootstrapMessage)](
+@@ -1537,6 +1581,9 @@ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
+                                        Result<NSExtensionProcess, LaunchError>&&
+                                            result) {
++    ReynardStartupDiagnosticLog(
++        "NSExtensionProcess::StartProcess callback type=%d error=%d",
++        int(self->mProcessType), result.isErr());
+     if (result.isErr()) {
+       CHROMIUM_LOG(ERROR) << "NSExtensionProcess::StartProcess failed";
+@@ -1567,6 +1614,8 @@ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
+     // Send our bootstrap message to the content and wait for it to reply with
+     // the task port before resolving.
++    ReynardStartupDiagnosticLog("before xpc bootstrap send type=%d",
++                                int(self->mProcessType));
+     xpc_connection_send_message_with_reply(
+         self->mResults.mXPCConnection.get(), bootstrapMessage.get(), nullptr,
+         ^(xpc_object_t reply) {
++          ReynardStartupDiagnosticLog("xpc bootstrap reply ENTER type=%d",
++                                      int(self->mProcessType));
+           xpc_type_t replyType = reply ? xpc_get_type(reply) : XPC_TYPE_ERROR;
+@@ -1601,6 +1650,8 @@ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
+           pid_t pid =
+               static_cast<pid_t>(xpc_dictionary_get_int64(reply, "pid"));
++          ReynardStartupDiagnosticLog("xpc bootstrap pid=%d type=%d",
++                                      int(pid), int(self->mProcessType));
+           CHROMIUM_LOG(INFO) << "Extension process started, pid: " << pid;
+@@ -1617,12 +1668,16 @@ RefPtr<ProcessLaunchPromise> IosProcessLauncher::DoLaunch() {
+           }
+ 
+           // Notify child process start
++          ReynardStartupDiagnosticLog("before NotifyChildProcessStarted pid=%d", int(pid));
+           mozilla::widget::NotifyChildProcessStarted(static_cast<int32_t>(pid),
+                                                      processType);
++          ReynardStartupDiagnosticLog("after NotifyChildProcessStarted pid=%d", int(pid));
+ 
+           self->mResults.mHandle = pid;
+           if (!settleState->exchange(true, std::memory_order_relaxed)) {
++            ReynardStartupDiagnosticLog("resolving ProcessLaunchPromise pid=%d", int(pid));
+             promise->Resolve(std::move(self->mResults), __func__);
+           }
+         });
+diff --git a/widget/uikit/nsWindow.mm b/widget/uikit/nsWindow.mm
+--- a/widget/uikit/nsWindow.mm
++++ b/widget/uikit/nsWindow.mm
+@@ -10,6 +10,12 @@
+ #import <UIKit/UITouch.h>
+ #import <UIKit/UIView.h>
+ #import <UIKit/UIWindow.h>
++
++#include <fcntl.h>
++#include <stdarg.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <unistd.h>
+ 
+ #include "ScreenHelperUIKit.h"
+@@ -66,6 +72,40 @@ using namespace mozilla::layers;
+ using namespace mozilla::widget;
+ 
++static void ReynardStartupDiagnosticLog(const char* format, ...) {
++  static const char* kDirectory =
++      "/var/mobile/Documents/ReynardDiagnostics";
++  static const char* kPath =
++      "/var/mobile/Documents/ReynardDiagnostics/startup.log";
++  mkdir(kDirectory, 0755);
++  int fd = open(kPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
++  if (fd < 0) {
++    return;
++  }
++
++  char message[1024];
++  va_list args;
++  va_start(args, format);
++  vsnprintf(message, sizeof(message), format, args);
++  va_end(args);
++  timeval tv = {};
++  gettimeofday(&tv, nullptr);
++  const double wallTime =
++      static_cast<double>(tv.tv_sec) + static_cast<double>(tv.tv_usec) / 1e6;
++  char line[1400];
++  int length = snprintf(line, sizeof(line),
++                        "native wall=%.6f pid=%d nsWindow %s\n", wallTime,
++                        getpid(), message);
++  if (length > 0) {
++    if (length >= static_cast<int>(sizeof(line))) {
++      length = static_cast<int>(sizeof(line)) - 1;
++    }
++    write(fd, line, static_cast<size_t>(length));
++  }
++  close(fd);
++}
++
+ // Used to retain a Cocoa object for the remainder of a method's execution.
+ class nsAutoRetainUIKitObject {
+@@ -1118,6 +1158,8 @@ layers::NativeLayerRoot* nsWindow::GetNativeLayerRoot() {
+ 
+ void nsWindow::GetCompositorWidgetInitData(
+     mozilla::widget::CompositorWidgetInitData* aInitData) {
++  ReynardStartupDiagnosticLog(
++      "GetCompositorWidgetInitData ENTER");
+   CloseNativeLayerRemoteParent(false);
+@@ -1140,6 +1182,8 @@ void nsWindow::GetCompositorWidgetInitData(
+ 
+   MOZ_ASSERT(CompositorThread());
+ 
++  ReynardStartupDiagnosticLog(
++      "GetCompositorWidgetInitData before compositor Dispatch");
+   Monitor monitor("nsWindow::GetCompositorWidgetInitData");
+   bool didBindParentEndpoint = false;
+@@ -1152,12 +1196,17 @@ void nsWindow::GetCompositorWidgetInitData(
+         lock.Notify();
+       }));
+ 
++  ReynardStartupDiagnosticLog(
++      "GetCompositorWidgetInitData before monitor wait");
+   {
+     MonitorAutoLock lock(monitor);
+     while (!didBindParentEndpoint) {
+       lock.Wait();
+     }
+   }
++  ReynardStartupDiagnosticLog(
++      "GetCompositorWidgetInitData after monitor wait");
+ 
+   auto clientSize = GetClientBounds().Size();
+@@ -1270,9 +1319,12 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
+                                         NSDictionary* aInitData,
+                                         bool aPrivateMode) {
+   MOZ_ASSERT(NS_IsMainThread());
++  ReynardStartupDiagnosticLog("GeckoViewOpenWindow ENTER");
+ 
+   AUTO_PROFILER_LABEL("GeckoViewOpenWindows", OTHER);
+@@ -1294,6 +1346,7 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
+   }
+ 
+   nsCOMPtr<mozIDOMWindowProxy> domWindow;
++  ReynardStartupDiagnosticLog("GeckoViewOpenWindow before nsIWindowWatcher::OpenWindow");
+   ww->OpenWindow(
+       nullptr, url,
+@@ -1301,6 +1354,7 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
+                          [aId lengthOfBytesUsingEncoding:NSUTF8StringEncoding]),
+       chromeFlags, iosView, getter_AddRefs(domWindow));
++  ReynardStartupDiagnosticLog("GeckoViewOpenWindow after nsIWindowWatcher::OpenWindow");
+   MOZ_RELEASE_ASSERT(domWindow);
+@@ -1322,5 +1376,6 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
+   GeckoViewWindowImpl* gvWindow = [[GeckoViewWindowImpl alloc] init];
+   gvWindow->mOuterWindow = pdomWindow;
+   gvWindow->mWindow = window;
++  ReynardStartupDiagnosticLog("GeckoViewOpenWindow EXIT");
+   return [gvWindow autorelease];
+ }
