@@ -10,7 +10,7 @@ on:
       - browser/Reynard/main.swift
       - browser/GeckoView/Runtime/GeckoRuntime.swift
       - browser/GeckoView/Session/GeckoSession.swift
-      - patches/zz-startup-file-diagnostic.patch
+      - tools/development/inject-startup-trace.py
   workflow_dispatch:
 
 permissions:
@@ -58,10 +58,14 @@ jobs:
       - name: Apply Gecko patches
         run: ./tools/development/apply-patches.sh
 
+      - name: Inject startup trace
+        run: python tools/development/inject-startup-trace.py
+
       - name: Verify committed diagnostic
         run: |
-          grep -n "diagnosticBypassJIT = true" browser/Reynard/JIT/JITController.swift
+          grep -n "diagnosticBypassJIT = false" browser/Reynard/JIT/JITController.swift
           grep -n "/var/mobile/Documents/ReynardDiagnostics/startup.log" browser/GeckoView/Runtime/GeckoRuntime.swift
+          grep -n "GeckoSession.open before GeckoViewOpenWindow" browser/GeckoView/Session/GeckoSession.swift
           grep -n "before beginExtensionRequestWithInputItems" engine/firefox/ipc/glue/NSExtensionUtils.mm
           grep -n "before xpc bootstrap send" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
           grep -n "GeckoViewOpenWindow before nsIWindowWatcher::OpenWindow" engine/firefox/widget/uikit/nsWindow.mm
