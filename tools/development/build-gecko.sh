@@ -47,6 +47,7 @@ rm -f "$FIREFOX_DIR/.mozconfig"
 	echo "ac_add_options --enable-optimize"
 	echo "ac_add_options --disable-debug"
 	echo "ac_add_options --disable-tests"
+	echo "ac_add_options --enable-bootstrap"
 } > "$FIREFOX_DIR/.mozconfig"
 
 "$ROOT_DIR/tools/toolchains/validate-release-toolchain.sh" >/dev/null
