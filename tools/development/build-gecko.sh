@@ -21,16 +21,21 @@ esac
 
 TARGET="$REYNARD_RUST_TARGET"
 LLVM_PREFIX="${LLVM_PREFIX:-/opt/homebrew/opt/llvm}"
-WASM_CC="${WASM_CC:-$LLVM_PREFIX/bin/clang}"
-WASM_CXX="${WASM_CXX:-$LLVM_PREFIX/bin/clang++}"
+CC="${CC:-$LLVM_PREFIX/bin/clang}"
+CXX="${CXX:-$LLVM_PREFIX/bin/clang++}"
+HOST_CC="${HOST_CC:-$CC}"
+HOST_CXX="${HOST_CXX:-$CXX}"
 
-if [ ! -x "$WASM_CC" ] || [ ! -x "$WASM_CXX" ]; then
-	echo "Missing WebAssembly compiler under $LLVM_PREFIX."
-	echo "Install Homebrew LLVM or set WASM_CC and WASM_CXX explicitly."
+if [ ! -x "$CC" ] || [ ! -x "$CXX" ]; then
+	echo "Missing pinned Clang toolchain under $LLVM_PREFIX." >&2
 	exit 1
 fi
 
-export WASM_CC WASM_CXX
+# Keep Korboy's pinned LLVM for native iOS/host compilation. Do not set
+# WASM_CC/WASM_CXX here: --enable-bootstrap supplies Mozilla's matching
+# clang + WASI sysroot/compiler-rt pair for sandboxed WebAssembly libraries.
+export CC CXX HOST_CC HOST_CXX
+unset WASM_CC WASM_CXX || true
 export RUSTUP_TOOLCHAIN="$REYNARD_RUST_TOOLCHAIN"
 
 cd "$ROOT_DIR"
