@@ -115,12 +115,7 @@ def inject_nsextension() -> None:
             "NSExtension diagnostic headers",
         )
 
-    insert_after(
-        path,
-        "using namespace mozilla::widget;\n",
-        c_logger("NSExtension"),
-        "NSExtension logger",
-    )
+    insert_after(path, "using namespace mozilla::widget;\n", c_logger("NSExtension"), "NSExtension logger")
     insert_after(
         path,
         "- (BOOL)listener:(NSXPCListener*)listener\n"
@@ -134,12 +129,7 @@ def inject_nsextension() -> None:
         '  ReynardStartupDiagnosticLog("NSXPC listener shouldAcceptNewConnection EXIT");\n',
         "NSXPC accept exit",
     )
-    insert_after(
-        path,
-        "- (void)ping {\n",
-        '  ReynardStartupDiagnosticLog("bootstrap ping received");\n',
-        "bootstrap ping",
-    )
+    insert_after(path, "- (void)ping {\n", '  ReynardStartupDiagnosticLog("bootstrap ping received");\n', "bootstrap ping")
     insert_after(
         path,
         "- (void)startWithCompletion:\n"
@@ -147,9 +137,12 @@ def inject_nsextension() -> None:
         '  ReynardStartupDiagnosticLog("ExtensionProcess startWithCompletion CALL");\n',
         "ExtensionProcess start",
     )
-    insert_after(
+    replace_once(
         path,
+        "  void (^completion)(NSError* _Nullable) = [aCompletion copy];\n\n"
         "  dispatch_async(ExtensionLaunchQueue(), ^{\n",
+        "  void (^completion)(NSError* _Nullable) = [aCompletion copy];\n\n"
+        "  dispatch_async(ExtensionLaunchQueue(), ^{\n"
         '    ReynardStartupDiagnosticLog("ExtensionProcess launch queue ENTER");\n',
         "ExtensionProcess launch queue",
     )
@@ -233,7 +226,12 @@ def inject_child_host() -> None:
     )
     additions = "".join(h for h in headers if h not in text)
     if additions:
-        insert_after(path, "#ifdef XP_IOS\n", additions, "ChildHost diagnostic headers")
+        replace_once(
+            path,
+            "#ifdef XP_IOS\n#  include <unistd.h>\n",
+            "#ifdef XP_IOS\n" + additions + "#  include <unistd.h>\n",
+            "ChildHost diagnostic headers",
+        )
 
     insert_after(
         path,
@@ -270,7 +268,9 @@ def inject_child_host() -> None:
     )
     insert_after(
         path,
-        "         ^(xpc_object_t reply) {\n",
+        "    xpc_connection_send_message_with_reply(\n"
+        "        self->mResults.mXPCConnection.get(), bootstrapMessage.get(), nullptr,\n"
+        "        ^(xpc_object_t reply) {\n",
         '          ReynardStartupDiagnosticLog("xpc bootstrap reply ENTER type=%d", int(self->mProcessType));\n',
         "xpc bootstrap reply",
     )
@@ -295,9 +295,12 @@ def inject_child_host() -> None:
         '          ReynardStartupDiagnosticLog("after NotifyChildProcessStarted pid=%d", int(pid));\n',
         "after child notify",
     )
-    insert_after(
+    replace_once(
         path,
+        "          self->mResults.mHandle = pid;\n"
         "          if (!settleState->exchange(true, std::memory_order_relaxed)) {\n",
+        "          self->mResults.mHandle = pid;\n"
+        "          if (!settleState->exchange(true, std::memory_order_relaxed)) {\n"
         '            ReynardStartupDiagnosticLog("resolving ProcessLaunchPromise pid=%d", int(pid));\n',
         "resolve process launch promise",
     )
@@ -322,12 +325,7 @@ def inject_nswindow() -> None:
             "nsWindow diagnostic headers",
         )
 
-    insert_after(
-        path,
-        "using namespace mozilla::widget;\n",
-        c_logger("nsWindow"),
-        "nsWindow logger",
-    )
+    insert_after(path, "using namespace mozilla::widget;\n", c_logger("nsWindow"), "nsWindow logger")
     insert_after(
         path,
         "void nsWindow::GetCompositorWidgetInitData(\n"
