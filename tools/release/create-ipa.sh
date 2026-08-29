@@ -90,13 +90,13 @@ MACHO_LIST="$(mktemp "${TMPDIR:-/tmp}/reynard-macho-list.XXXXXX")"
 trap 'rm -f "$MACHO_LIST"' EXIT HUP INT TERM
 
 # Normalize only the packaging copy so the archived input remains immutable.
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard" "$APP_BUNDLE/Info.plist"
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard.Helper" "$APP_BUNDLE/PlugIns/Reynard Helper.appex/Info.plist"
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard.OpenIn" "$APP_BUNDLE/PlugIns/OpenIn.appex/Info.plist"
+plutil -replace CFBundleIdentifier -string "com.meteoni.ReynardKorboy" "$APP_BUNDLE/Info.plist"
+plutil -replace CFBundleIdentifier -string "com.meteoni.ReynardKorboy.Helper" "$APP_BUNDLE/PlugIns/Reynard Helper.appex/Info.plist"
+plutil -replace CFBundleIdentifier -string "com.meteoni.ReynardKorboy.OpenIn" "$APP_BUNDLE/PlugIns/OpenIn.appex/Info.plist"
 
-if [ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/Info.plist")" != "com.minh-ton.Reynard" ] ||
-	[ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/PlugIns/Reynard Helper.appex/Info.plist")" != "com.minh-ton.Reynard.Helper" ] ||
-	[ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/PlugIns/OpenIn.appex/Info.plist")" != "com.minh-ton.Reynard.OpenIn" ]; then
+if [ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/Info.plist")" != "com.meteoni.ReynardKorboy" ] ||
+	[ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/PlugIns/Reynard Helper.appex/Info.plist")" != "com.meteoni.ReynardKorboy.Helper" ] ||
+	[ "$(plutil -extract CFBundleIdentifier raw "$APP_BUNDLE/PlugIns/OpenIn.appex/Info.plist")" != "com.meteoni.ReynardKorboy.OpenIn" ]; then
 	echo "Bundle identifier preflight failed." >&2
 	exit 1
 fi
