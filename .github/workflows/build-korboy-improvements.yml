@@ -1,0 +1,113 @@
+name: Build Korboy Reynard Improvements
+
+on:
+  push:
+    branches:
+      - build/korboy-improvements
+    paths:
+      - .github/workflows/build-korboy-improvements.yml
+      - browser/**
+      - engine/**
+      - patches/**
+      - support/**
+      - tools/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Korboy improvements jailbroken TIPA
+    runs-on: macos-26
+    env:
+      RUSTUP_TOOLCHAIN: "1.95.0"
+
+    steps:
+      - name: Check out Korboy improvements snapshot
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Set up Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.2"
+
+      - name: Export pinned Xcode path
+        shell: bash
+        run: |
+          XCODE_APP="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          echo "REYNARD_XCODE_APP=$XCODE_APP" >> "$GITHUB_ENV"
+          "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" -version
+
+      - name: Install build and packaging dependencies
+        run: |
+          brew install python@3.12 lld cbindgen llvm ldid
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          targets: aarch64-apple-ios
+
+      - name: Initialize source submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive support/idevice
+          git submodule update --init --depth 1 engine/firefox
+
+      - name: Update pinned Gecko source
+        run: ./tools/development/update-gecko.sh
+
+      - name: Prepare complete Firefox patch series
+        run: ./tools/development/apply-patches.sh
+
+      - name: Validate pinned release toolchain
+        run: ./tools/toolchains/validate-release-toolchain.sh
+
+      - name: Restore dependency caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.mozbuild
+            support/idevice/target
+          key: korboy-reynard-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/toolchains/release.env', 'support/idevice/Cargo.lock', 'engine/release.txt') }}
+          restore-keys: |
+            korboy-reynard-deps-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build idevice support library
+        run: ./tools/development/build-idevice.sh
+
+      - name: Build Gecko
+        run: ./tools/development/build-gecko.sh
+
+      - name: Build unsigned jailbroken app archive
+        run: ./tools/release/build-app.sh --jailbroken
+
+      - name: Package and verify jailbroken IPA
+        run: ./tools/release/create-ipa.sh --jailbroken-only
+
+      - name: Verify separate bundle identifiers
+        run: |
+          unzip -p dist/Reynard-Jailbroken.ipa Payload/Reynard.app/Info.plist > /tmp/Reynard-Korboy-Info.plist
+          test "$(plutil -extract CFBundleIdentifier raw /tmp/Reynard-Korboy-Info.plist)" = "com.meteoni.ReynardKorboy"
+          grep -q '<string>com.meteoni.ReynardKorboy</string>' browser/Reynard/Entitlements/Reynard.private.entitlements
+          grep -q '<string>com.meteoni.ReynardKorboy.Helper</string>' browser/Helper/Entitlements/Reynard-Helper.private.entitlements
+
+      - name: Rename installable artifact
+        run: mv dist/Reynard-Jailbroken.ipa dist/Reynard-Korboy-Improvements.tipa
+
+      - name: Upload Korboy improvements TIPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-Korboy-Improvements.tipa
+          path: dist/Reynard-Korboy-Improvements.tipa
+          if-no-files-found: error
+          compression-level: 0
