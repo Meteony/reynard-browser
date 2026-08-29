@@ -333,10 +333,13 @@ def inject_nswindow() -> None:
         '  ReynardStartupDiagnosticLog("GetCompositorWidgetInitData ENTER");\n',
         "compositor init enter",
     )
-    insert_after(
+    replace_once(
         path,
-        "  MOZ_ASSERT(CompositorThread());\n",
-        '  ReynardStartupDiagnosticLog("GetCompositorWidgetInitData before compositor Dispatch");\n',
+        "  MOZ_ASSERT(CompositorThread());\n\n"
+        '  Monitor monitor("nsWindow::GetCompositorWidgetInitData");\n',
+        "  MOZ_ASSERT(CompositorThread());\n"
+        '  ReynardStartupDiagnosticLog("GetCompositorWidgetInitData before compositor Dispatch");\n\n'
+        '  Monitor monitor("nsWindow::GetCompositorWidgetInitData");\n',
         "before compositor dispatch",
     )
     replace_once(
