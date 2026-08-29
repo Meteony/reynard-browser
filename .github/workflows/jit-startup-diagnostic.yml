@@ -1,9 +1,9 @@
-name: Build JIT Startup Diagnostic
+name: Build First Presented Frame Diagnostic
 
 on:
   push:
     branches:
-      - diagnostic/jit-startup-5s
+      - diagnostic/first-presented-frame
     paths:
       - .github/workflows/jit-startup-diagnostic.yml
       - browser/Reynard/JIT/JITController.swift
@@ -15,6 +15,7 @@ on:
       - tools/development/inject-startup-critical-path-diagnostic.py
       - tools/development/inject-single-restored-tab-diagnostic.py
       - tools/development/inject-extension-completion-queue-diagnostic.py
+      - tools/development/inject-first-presented-frame-diagnostic.py
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    name: Build TrollStore JIT startup diagnostic
+    name: Build TrollStore first presented-frame diagnostic
     runs-on: macos-26
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -77,6 +78,9 @@ jobs:
       - name: Decouple NSExtension completion delivery
         run: python tools/development/inject-extension-completion-queue-diagnostic.py
 
+      - name: Inject first presented-frame diagnostic
+        run: python tools/development/inject-first-presented-frame-diagnostic.py
+
       - name: Verify diagnostic injection
         run: |
           grep -n "diagnosticBypassJIT = false" browser/Reynard/JIT/JITController.swift
@@ -99,6 +103,11 @@ jobs:
           grep -n "critical single-restored-tab keeping selected web tab" browser/Reynard/Client/TabManagement/TabManagerImpl.swift
           grep -n "critical restored-load-request" browser/Reynard/Client/TabManagement/TabManagerImpl.swift
           grep -n "launch childID=%d remoteType=%s" engine/firefox/dom/ipc/ContentParent.cpp
+          grep -n "critical native-layer-commit ENTER" engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm
+          grep -n "critical native-layer-commit EXIT" engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm
+          grep -n "critical display-candidate" engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm
+          grep -n "critical presented-frame-confirmed" engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm
+          grep -n "CADisplayLink" engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm
           grep -n 'pref("dom.ipc.processPrelaunch.enabled", true);' engine/firefox/mobile/ios/app/mobile.js
           ! grep -q 'dom.ipc.processPrelaunch.delayMs' engine/firefox/mobile/ios/app/mobile.js
           ! grep -q 'dom.ipc.processPrelaunch.fission.number' engine/firefox/mobile/ios/app/mobile.js
@@ -158,11 +167,11 @@ jobs:
         run: ./tools/release/create-ipa.sh --trollstore
 
       - name: Rename diagnostic artifact
-        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Lazy-Restore-Decoupled-Completion-Diagnostic.tipa
+        run: mv dist/Reynard-TrollStore.tipa dist/Reynard-Lazy-Restore-First-Presented-Frame-Diagnostic.tipa
 
       - name: Upload TrollStore diagnostic TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: Reynard-Lazy-Restore-Decoupled-Completion-Diagnostic.tipa
-          path: dist/Reynard-Lazy-Restore-Decoupled-Completion-Diagnostic.tipa
+          name: Reynard-Lazy-Restore-First-Presented-Frame-Diagnostic.tipa
+          path: dist/Reynard-Lazy-Restore-First-Presented-Frame-Diagnostic.tipa
           if-no-files-found: error
