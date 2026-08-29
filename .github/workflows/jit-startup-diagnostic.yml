@@ -64,7 +64,8 @@ jobs:
       - name: Verify committed diagnostic
         run: |
           grep -n "diagnosticBypassJIT = false" browser/Reynard/JIT/JITController.swift
-          grep -n "/var/mobile/Documents/ReynardDiagnostics/startup.log" browser/GeckoView/Runtime/GeckoRuntime.swift
+          grep -n 'directoryPath = "/var/mobile/Documents/ReynardDiagnostics"' browser/GeckoView/Runtime/GeckoRuntime.swift
+          grep -n 'logPath = directoryPath + "/startup.log"' browser/GeckoView/Runtime/GeckoRuntime.swift
           grep -n "GeckoSession.open before GeckoViewOpenWindow" browser/GeckoView/Session/GeckoSession.swift
           grep -n "before beginExtensionRequestWithInputItems" engine/firefox/ipc/glue/NSExtensionUtils.mm
           grep -n "before xpc bootstrap send" engine/firefox/ipc/glue/GeckoChildProcessHost.cpp
