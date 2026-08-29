@@ -73,20 +73,35 @@ private func configureSandboxExtension() {
     setenv("MOZ_DOCUMENTS_SANDBOX_EXTENSION", tokenString, 1)
 }
 
+GeckoStartupDiagnostic.reset()
+GeckoStartupDiagnostic.log("main before LocalizationBundle.activate")
 LocalizationBundle.activate()
+GeckoStartupDiagnostic.log("main after LocalizationBundle.activate")
+
+GeckoStartupDiagnostic.log("main before UserDataMigration.run")
 UserDataMigration.shared.run()
+GeckoStartupDiagnostic.log("main after UserDataMigration.run")
+
+GeckoStartupDiagnostic.log("main before JITController.start")
 JITController.shared.start()
+GeckoStartupDiagnostic.log("main after JITController.start")
 
 if #unavailable(iOS 14.0),
    getEntitlementValue("com.apple.private.security.no-sandbox") {
+    GeckoStartupDiagnostic.log("main before configureUnsandboxedAppDataDirectories")
     configureUnsandboxedAppDataDirectories()
+    GeckoStartupDiagnostic.log("main after configureUnsandboxedAppDataDirectories")
 }
 
+GeckoStartupDiagnostic.log("main before configureSandboxExtension")
 configureSandboxExtension()
+GeckoStartupDiagnostic.log("main after configureSandboxExtension")
 
 _ = NotificationCenter.default.addObserver(forName: Notification.Name("GeckoView.BuildMenu"), object: nil, queue: .main) { notification in
     guard let builder = notification.object as? UIMenuBuilder else { return }
     ApplicationMenuBuilder.build(with: builder)
 }
 
+GeckoStartupDiagnostic.log("main before GeckoRuntime.main")
 GeckoRuntime.main(argc: CommandLine.argc, argv: CommandLine.unsafeArgv)
+GeckoStartupDiagnostic.log("main after GeckoRuntime.main")
