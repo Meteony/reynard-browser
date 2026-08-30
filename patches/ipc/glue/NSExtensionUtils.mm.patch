@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000000..bd49425f027c
 --- /dev/null
 +++ b/ipc/glue/NSExtensionUtils.mm
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,356 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -78,6 +78,16 @@ index 000000000000..bd49425f027c
 +  return queue;
 +}
 +
++static dispatch_queue_t ExtensionCompletionQueue() {
++  static dispatch_queue_t queue;
++  static dispatch_once_t onceToken;
++  dispatch_once(&onceToken, ^{
++    queue = dispatch_queue_create(
++        "com.minh-ton.Reynard.ExtensionCompletionQueue", DISPATCH_QUEUE_SERIAL);
++  });
++  return queue;
++}
++
 +static NSError* ExtensionLaunchError(NSString* description,
 +                                     NSError* _Nullable underlying = nil) {
 +  NSDictionary* userInfo = underlying
@@ -127,7 +137,7 @@ index 000000000000..bd49425f027c
 +  dispatch_async(ExtensionLaunchQueue(), ^{
 +    __block bool completed = false;
 +    void (^completeOnce)(NSError* _Nullable) = ^(NSError* _Nullable error) {
-+      dispatch_async(ExtensionLaunchQueue(), ^{
++      dispatch_async(ExtensionCompletionQueue(), ^{
 +        if (completed) {
 +          return;
 +        }
