@@ -2,29 +2,28 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PATH = ROOT / "engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm"
+REMOTE_PATH = ROOT / "engine/firefox/gfx/layers/NativeLayerRootRemoteMacParent.mm"
+CA_PATH = ROOT / "engine/firefox/gfx/layers/NativeLayerCA.mm"
 
 
-def replace_once(old: str, new: str, label: str) -> None:
-    text = PATH.read_text()
+def replace_once(path: Path, old: str, new: str, label: str) -> None:
+    text = path.read_text()
     count = text.count(old)
     if count != 1:
         raise SystemExit(
-            f"{label}: expected exactly one anchor in {PATH}, found {count}"
+            f"{label}: expected exactly one anchor in {path}, found {count}"
         )
-    PATH.write_text(text.replace(old, new, 1))
+    path.write_text(text.replace(old, new, 1))
 
 
-def main() -> None:
+def inject_remote_surface_arrival_probe() -> None:
     replace_once(
+        REMOTE_PATH,
         '#include "mozilla/layers/NativeLayerRootRemoteMacParent.h"\n',
         '''#include "mozilla/layers/NativeLayerRootRemoteMacParent.h"
 
 #ifdef XP_IOS
-#  import <Foundation/Foundation.h>
-#  import <QuartzCore/CADisplayLink.h>
 #  import <QuartzCore/QuartzCore.h>
-#  include <dispatch/dispatch.h>
 #  include <atomic>
 #  include <fcntl.h>
 #  include <stdarg.h>
@@ -34,13 +33,14 @@ def main() -> None:
 #  include <unistd.h>
 #endif
 ''',
-        "presented-frame diagnostic headers",
+        "remote surface diagnostic headers",
     )
 
     replace_once(
+        REMOTE_PATH,
         "namespace mozilla {\nnamespace layers {\n",
         '''#ifdef XP_IOS
-static void ReynardPresentedFrameDiagnosticLog(const char* format, ...) {
+static void ReynardSurfaceArrivalDiagnosticLog(const char* format, ...) {
   static const char* kDirectory =
       "/var/mobile/Documents/ReynardDiagnostics";
   static const char* kPath =
@@ -76,7 +76,154 @@ static void ReynardPresentedFrameDiagnosticLog(const char* format, ...) {
   close(fd);
 }
 
-static std::atomic<uint64_t> sReynardNativeCommitSequence{0};
+static std::atomic<uint64_t> sReynardRemoteCommitSequence{0};
+#endif
+
+namespace mozilla {
+namespace layers {
+''',
+        "remote surface diagnostic support",
+    )
+
+    replace_once(
+        REMOTE_PATH,
+        '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
+    nsTArray<NativeLayerCommand>&& aCommands) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_OK();
+  }
+
+  for (auto& command : aCommands) {
+''',
+        '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
+    nsTArray<NativeLayerCommand>&& aCommands) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_OK();
+  }
+
+#ifdef XP_IOS
+  size_t changedSurfaceCount = 0;
+#endif
+  for (auto& command : aCommands) {
+''',
+        "remote native layer counters",
+    )
+
+    replace_once(
+        REMOTE_PATH,
+        '''      case NativeLayerCommand::TCommandChangedSurface: {
+        auto& changedSurface = command.get_CommandChangedSurface();
+''',
+        '''      case NativeLayerCommand::TCommandChangedSurface: {
+        auto& changedSurface = command.get_CommandChangedSurface();
+#ifdef XP_IOS
+        ++changedSurfaceCount;
+#endif
+''',
+        "remote changed surface counter",
+    )
+
+    replace_once(
+        REMOTE_PATH,
+        '''  mRealNativeLayerRoot->CommitToScreen();
+
+  return IPC_OK();
+''',
+        '''#ifdef XP_IOS
+  const uint64_t sequence =
+      sReynardRemoteCommitSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (sequence <= 24) {
+    ReynardSurfaceArrivalDiagnosticLog(
+        "critical surface-arrival ENTER seq=%llu root=%p commands=%zu "
+        "changedSurfaces=%zu media=%.6f",
+        static_cast<unsigned long long>(sequence),
+        static_cast<void*>(mRealNativeLayerRoot.get()), aCommands.Length(),
+        changedSurfaceCount, CACurrentMediaTime());
+  }
+#endif
+
+  const bool committed = mRealNativeLayerRoot->CommitToScreen();
+
+#ifdef XP_IOS
+  if (sequence <= 24) {
+    ReynardSurfaceArrivalDiagnosticLog(
+        "critical surface-arrival EXIT seq=%llu root=%p committed=%d "
+        "changedSurfaces=%zu media=%.6f",
+        static_cast<unsigned long long>(sequence),
+        static_cast<void*>(mRealNativeLayerRoot.get()), committed ? 1 : 0,
+        changedSurfaceCount, CACurrentMediaTime());
+  }
+#endif
+
+  return IPC_OK();
+''',
+        "remote surface arrival probe",
+    )
+
+
+def inject_actual_ca_commit_probe() -> None:
+    replace_once(
+        CA_PATH,
+        '#import <QuartzCore/QuartzCore.h>\n',
+        '''#import <QuartzCore/QuartzCore.h>
+
+#ifdef XP_IOS
+#  import <Foundation/Foundation.h>
+#  import <QuartzCore/CADisplayLink.h>
+#  include <dispatch/dispatch.h>
+#  include <atomic>
+#  include <fcntl.h>
+#  include <stdarg.h>
+#  include <stdio.h>
+#  include <sys/stat.h>
+#  include <sys/time.h>
+#  include <unistd.h>
+#endif
+''',
+        "actual CA commit diagnostic headers",
+    )
+
+    replace_once(
+        CA_PATH,
+        "namespace mozilla {\nnamespace layers {\n",
+        '''#ifdef XP_IOS
+static void ReynardActualPresentationDiagnosticLog(const char* format, ...) {
+  static const char* kDirectory =
+      "/var/mobile/Documents/ReynardDiagnostics";
+  static const char* kPath =
+      "/var/mobile/Documents/ReynardDiagnostics/startup.log";
+
+  mkdir(kDirectory, 0755);
+  int fd = open(kPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0) {
+    return;
+  }
+
+  char message[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(message, sizeof(message), format, args);
+  va_end(args);
+
+  timeval tv = {};
+  gettimeofday(&tv, nullptr);
+  const double wallTime =
+      static_cast<double>(tv.tv_sec) + static_cast<double>(tv.tv_usec) / 1e6;
+
+  char line[1400];
+  int length = snprintf(
+      line, sizeof(line), "native wall=%.6f pid=%d PresentedFrame %s\\n",
+      wallTime, getpid(), message);
+  if (length > 0) {
+    if (length >= static_cast<int>(sizeof(line))) {
+      length = static_cast<int>(sizeof(line)) - 1;
+    }
+    write(fd, line, static_cast<size_t>(length));
+  }
+  close(fd);
+}
+
+static std::atomic<uint64_t> sReynardActualCommitSequence{0};
 
 @interface ReynardPresentedFrameProbe : NSObject {
  @private
@@ -104,7 +251,7 @@ static std::atomic<uint64_t> sReynardNativeCommitSequence{0};
 - (void)displayLinkFired:(CADisplayLink*)displayLink {
   if (mCandidatePresentationTime == 0.0) {
     mCandidatePresentationTime = displayLink.targetTimestamp;
-    ReynardPresentedFrameDiagnosticLog(
+    ReynardActualPresentationDiagnosticLog(
         "critical display-candidate seq=%llu commitMedia=%.6f "
         "timestamp=%.6f target=%.6f deltaMs=%.3f",
         static_cast<unsigned long long>(mSequence), mCommitMediaTime,
@@ -113,7 +260,7 @@ static std::atomic<uint64_t> sReynardNativeCommitSequence{0};
     return;
   }
 
-  ReynardPresentedFrameDiagnosticLog(
+  ReynardActualPresentationDiagnosticLog(
       "critical presented-frame-confirmed seq=%llu candidateTarget=%.6f "
       "callbackMedia=%.6f nextTimestamp=%.6f",
       static_cast<unsigned long long>(mSequence), mCandidatePresentationTime,
@@ -124,11 +271,6 @@ static std::atomic<uint64_t> sReynardNativeCommitSequence{0};
 
 static void ReynardSchedulePresentedFrameProbe(uint64_t aSequence,
                                                double aCommitMediaTime) {
-  // Keep the probe bounded so startup tracing cannot turn into frame polling.
-  if (aSequence > 24) {
-    return;
-  }
-
   dispatch_async(dispatch_get_main_queue(), ^{
     ReynardPresentedFrameProbe* probe =
         [[ReynardPresentedFrameProbe alloc] initWithSequence:aSequence
@@ -146,81 +288,74 @@ static void ReynardSchedulePresentedFrameProbe(uint64_t aSequence,
 namespace mozilla {
 namespace layers {
 ''',
-        "presented-frame diagnostic support",
+        "actual CA commit diagnostic support",
     )
 
     replace_once(
-        '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
-    nsTArray<NativeLayerCommand>&& aCommands) {
-  if (!mRealNativeLayerRoot) {
-    return IPC_OK();
+        CA_PATH,
+        '''  if (!NS_IsMainThread() && mOffMainThreadCommitsSuspended) {
+    mCommitPending = true;
+    return false;
   }
 
-  for (auto& command : aCommands) {
+  CommitRepresentation(WhichRepresentation::ONSCREEN, mOnscreenRootCALayer,
+                       mSublayers, mMutatedOnscreenLayerStructure,
+                       mWindowIsFullscreen);
 ''',
-        '''NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
-    nsTArray<NativeLayerCommand>&& aCommands) {
-  if (!mRealNativeLayerRoot) {
-    return IPC_OK();
+        '''  if (!NS_IsMainThread() && mOffMainThreadCommitsSuspended) {
+    mCommitPending = true;
+    return false;
   }
 
 #ifdef XP_IOS
-  size_t changedSurfaceCount = 0;
+  const auto diagnosticUpdateRequired = GetMaxUpdateRequired(
+      WhichRepresentation::ONSCREEN, mSublayers,
+      mMutatedOnscreenLayerStructure);
+  const bool diagnosticHasUpdate =
+      diagnosticUpdateRequired != NativeLayerCA::UpdateType::None;
 #endif
-  for (auto& command : aCommands) {
+
+  CommitRepresentation(WhichRepresentation::ONSCREEN, mOnscreenRootCALayer,
+                       mSublayers, mMutatedOnscreenLayerStructure,
+                       mWindowIsFullscreen);
 ''',
-        "native layer commit counters",
+        "actual CA commit pending-update check",
     )
 
     replace_once(
-        '''      case NativeLayerCommand::TCommandChangedSurface: {
-        auto& changedSurface = command.get_CommandChangedSurface();
-''',
-        '''      case NativeLayerCommand::TCommandChangedSurface: {
-        auto& changedSurface = command.get_CommandChangedSurface();
-#ifdef XP_IOS
-        ++changedSurfaceCount;
-#endif
-''',
-        "changed surface counter",
-    )
+        CA_PATH,
+        '''  mMutatedOnscreenLayerStructure = false;
 
-    replace_once(
-        '''  mRealNativeLayerRoot->CommitToScreen();
-
-  return IPC_OK();
+  mCommitPending = false;
 ''',
-        '''#ifdef XP_IOS
-  const uint64_t sequence =
-      sReynardNativeCommitSequence.fetch_add(1, std::memory_order_relaxed) + 1;
-  ReynardPresentedFrameDiagnosticLog(
-      "critical native-layer-commit ENTER seq=%llu root=%p commands=%zu "
-      "changedSurfaces=%zu media=%.6f",
-      static_cast<unsigned long long>(sequence),
-      static_cast<void*>(mRealNativeLayerRoot.get()), aCommands.Length(),
-      changedSurfaceCount, CACurrentMediaTime());
-#endif
-
-  const bool committed = mRealNativeLayerRoot->CommitToScreen();
+        '''  mMutatedOnscreenLayerStructure = false;
 
 #ifdef XP_IOS
-  const double commitMediaTime = CACurrentMediaTime();
-  ReynardPresentedFrameDiagnosticLog(
-      "critical native-layer-commit EXIT seq=%llu root=%p committed=%d "
-      "changedSurfaces=%zu media=%.6f",
-      static_cast<unsigned long long>(sequence),
-      static_cast<void*>(mRealNativeLayerRoot.get()), committed ? 1 : 0,
-      changedSurfaceCount, commitMediaTime);
-  if (committed && changedSurfaceCount > 0) {
-    ReynardSchedulePresentedFrameProbe(sequence, commitMediaTime);
+  if (diagnosticHasUpdate) {
+    const uint64_t sequence =
+        sReynardActualCommitSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (sequence <= 24) {
+      const double commitMediaTime = CACurrentMediaTime();
+      ReynardActualPresentationDiagnosticLog(
+          "critical actual-ca-commit seq=%llu root=%p main=%d update=%d "
+          "media=%.6f",
+          static_cast<unsigned long long>(sequence), static_cast<void*>(this),
+          NS_IsMainThread() ? 1 : 0,
+          static_cast<int>(diagnosticUpdateRequired), commitMediaTime);
+      ReynardSchedulePresentedFrameProbe(sequence, commitMediaTime);
+    }
   }
 #endif
 
-  return IPC_OK();
+  mCommitPending = false;
 ''',
-        "native layer commit probe",
+        "actual CA commit presentation probe",
     )
 
+
+def main() -> None:
+    inject_remote_surface_arrival_probe()
+    inject_actual_ca_commit_probe()
     print("First presented-frame diagnostic injected successfully.")
 
 
