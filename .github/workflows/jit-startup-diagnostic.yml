@@ -6,6 +6,7 @@ on:
       - diagnostic/first-presented-frame
     paths:
       - .github/workflows/jit-startup-diagnostic.yml
+      - patches/mobile/ios/app/mobile.js.patch
       - browser/Reynard/JIT/JITController.swift
       - browser/Reynard/main.swift
       - browser/GeckoView/Runtime/GeckoRuntime.swift
@@ -111,7 +112,7 @@ jobs:
           grep -n "CADisplayLink" engine/firefox/gfx/layers/NativeLayerCA.mm
           grep -n 'pref("dom.ipc.processPrelaunch.enabled", true);' engine/firefox/mobile/ios/app/mobile.js
           ! grep -q 'dom.ipc.processPrelaunch.delayMs' engine/firefox/mobile/ios/app/mobile.js
-          ! grep -q 'dom.ipc.processPrelaunch.fission.number' engine/firefox/mobile/ios/app/mobile.js
+          grep -n 'pref("dom.ipc.processPrelaunch.fission.number", 1);' engine/firefox/mobile/ios/app/mobile.js
           git diff --check
 
       - name: Install Rust toolchain
