@@ -31,11 +31,12 @@ if [ ! -x "$CC" ] || [ ! -x "$CXX" ]; then
 	exit 1
 fi
 
-# Keep Korboy's pinned LLVM for native iOS/host compilation. Do not set
-# WASM_CC/WASM_CXX here: --enable-bootstrap supplies Mozilla's matching
-# clang + WASI sysroot/compiler-rt pair for sandboxed WebAssembly libraries.
-export CC CXX HOST_CC HOST_CXX
-unset WASM_CC WASM_CXX || true
+# Keep Korboy's pinned LLVM for native iOS/host compilation. With
+# --enable-bootstrap, Mozilla installs its matching clang before compiler
+# detection, so point only the WASI build at that clang/sysroot/runtime set.
+WASM_CC="${WASM_CC:-$HOME/.mozbuild/clang/bin/clang}"
+WASM_CXX="${WASM_CXX:-$HOME/.mozbuild/clang/bin/clang++}"
+export CC CXX HOST_CC HOST_CXX WASM_CC WASM_CXX
 export RUSTUP_TOOLCHAIN="$REYNARD_RUST_TOOLCHAIN"
 
 cd "$ROOT_DIR"
