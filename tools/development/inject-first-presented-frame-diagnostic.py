@@ -326,11 +326,17 @@ namespace layers {
         CA_PATH,
         '''  mMutatedOnscreenLayerStructure = false;
 
+#ifdef XP_IOS
+  mLayersRetainedUntilNextScreenCommit.Clear();
+#endif
+
   mCommitPending = false;
 ''',
         '''  mMutatedOnscreenLayerStructure = false;
 
 #ifdef XP_IOS
+  mLayersRetainedUntilNextScreenCommit.Clear();
+
   if (diagnosticHasUpdate) {
     const uint64_t sequence =
         sReynardActualCommitSequence.fetch_add(1, std::memory_order_relaxed) + 1;
