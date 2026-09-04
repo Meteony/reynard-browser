@@ -91,11 +91,19 @@ final class UniversalLinkManager {
             return .allow
         }
         
+        // HTTP(S) Universal Links are only meaningful for top-level navigation.
+        // A subframe custom-scheme attempt is a separate case used by many
+        // payment/auth landing pages to preserve their fallback UI.
+        if request.isSubframe && kind != .externalScheme {
+            return .allow
+        }
+        
         let sessionID = ObjectIdentifier(session)
         let now = Date()
         pruneTransientState(now: now)
         
-        if request.isUserInitiatedNavigation || request.hasUserGesture {
+        if !request.isSubframe &&
+           (request.isUserInitiatedNavigation || request.hasUserGesture) {
             recentUserGestures[sessionID] = now
         }
         
@@ -177,6 +185,14 @@ final class UniversalLinkManager {
         sessionID: ObjectIdentifier,
         now: Date
     ) -> Bool {
+        if request.isSubframe {
+            // Never let arbitrary iframe navigation launch an app. Gecko itself
+            // already applies external-protocol iframe throttling; Reynard adds
+            // the stricter requirement that this particular request still carry
+            // a live user gesture.
+            return request.isUserInitiatedNavigation || request.hasUserGesture
+        }
+        
         if request.isUserInitiatedNavigation || request.hasUserGesture {
             return true
         }

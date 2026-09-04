@@ -23,6 +23,7 @@ public struct LoadRequest {
     public let hasUserGesture: Bool
     public let isUserInitiatedNavigation: Bool
     public let isDirectNavigation: Bool
+    public let isSubframe: Bool
 }
 
 private func loadRequestTarget(from value: Int32) -> LoadRequestTarget {
@@ -36,7 +37,7 @@ private func loadRequestTarget(from value: Int32) -> LoadRequestTarget {
     }
 }
 
-private func loadRequest(from message: [String: Any?]?) -> LoadRequest? {
+private func loadRequest(from message: [String: Any?]?, isSubframe: Bool = false) -> LoadRequest? {
     guard let uri = message?["uri"] as? String else {
         return nil
     }
@@ -54,8 +55,16 @@ private func loadRequest(from message: [String: Any?]?) -> LoadRequest? {
         hasUserGesture: hasUserGesture,
         isUserInitiatedNavigation:
             message?["isUserInitiatedNavigation"] as? Bool ?? hasUserGesture,
-        isDirectNavigation: true
+        isDirectNavigation: true,
+        isSubframe: isSubframe
     )
+}
+
+private func isPotentialExternalScheme(_ uri: String) -> Bool {
+    guard let scheme = URL(string: uri)?.scheme?.lowercased() else {
+        return false
+    }
+    return scheme != "http" && scheme != "https"
 }
 
 // MARK: - Navigation Delegate
@@ -160,14 +169,22 @@ func newNavigationHandler(_ session: GeckoSession) -> GeckoSessionHandler {
             return nil
             
         case .onLoadRequest:
-            guard let request = loadRequest(from: message) else {
+            let isTopLevel = message?["isTopLevel"] as? Bool ?? true
+            guard let request = loadRequest(from: message, isSubframe: !isTopLevel) else {
                 return true
             }
             
-            let isTopLevel = message?["isTopLevel"] as? Bool ?? true
             if isTopLevel {
                 // GeckoView expects this response to mean "handled by the app".
                 // Allow must therefore return false so Gecko continues the load itself.
+                return await delegate?.onLoadRequest(session: session, request: request) == .deny
+            }
+            
+            // External app launches are commonly attempted through a hidden iframe
+            // so the landing page can remain visible if the app is unavailable.
+            // Give those custom-scheme requests to the main navigation delegate;
+            // the app-link manager applies the stricter subframe gesture policy.
+            if isPotentialExternalScheme(request.uri) {
                 return await delegate?.onLoadRequest(session: session, request: request) == .deny
             }
             return await delegate?.onSubframeLoadRequest(session: session, request: request) == .deny
