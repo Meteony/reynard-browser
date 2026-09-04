@@ -1,0 +1,108 @@
+name: Build External App Links Experiment
+
+on:
+  push:
+    branches:
+      - experimental/external-app-links
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build TrollStore TIPA
+    runs-on: macos-26
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: "standard"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Set up latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
+      - name: Install build dependencies
+        run: |
+          brew install python@3.12 lld cbindgen llvm
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive support/idevice
+          git submodule update --init --depth 1 engine/firefox
+
+      - name: Update Gecko source
+        run: ./tools/development/update-gecko.sh
+
+      - name: Apply Gecko patches
+        run: ./tools/development/apply-patches.sh
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Hash Rust toolchain for cache
+        id: rust_toolchain
+        run: echo "hash=$(rustc -Vv | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Gecko dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.mozbuild
+          key: buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('engine/release.txt') }}
+          restore-keys: |
+            buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-
+
+      - name: Restore idevice build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            support/idevice/target
+            browser/Reynard/JIT/RPPairing/libidevice_ffi.a
+          key: buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('support/idevice/Cargo.lock', 'support/idevice/Cargo.toml', 'tools/development/build-idevice.sh') }}
+          restore-keys: |
+            buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Build Gecko
+        env:
+          CC: clang
+          CXX: clang++
+          LD: ld64.lld
+        run: ./tools/development/build-gecko.sh --use-sccache --auto-clobber
+
+      - name: Build idevice support library
+        run: ./tools/development/build-idevice.sh
+
+      - name: Install packaging dependencies
+        run: brew install ldid
+
+      - name: Build app
+        run: ./tools/release/build-app.sh --no-signing
+
+      - name: Create TrollStore TIPA
+        run: ./tools/release/create-ipa.sh --trollstore
+
+      - name: Upload TrollStore TIPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-External-App-Links-Experimental.tipa
+          path: dist/Reynard-TrollStore.tipa
+          if-no-files-found: error
